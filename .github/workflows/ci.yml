@@ -6,10 +6,9 @@ on:
       target:
         description: "Target device"
         required: true
-        default: "beyond0lte"
+        default: "o1s"
         type: choice
         options:
-          - beyond0lte
           - a52sxq
           - a53x
           - a73xq
