@@ -2,10 +2,25 @@ name: CI
 
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - 'sixteen'
+    inputs:
+      target:
+        description: "Target device"
+        required: true
+        default: "beyond0lte"
+        type: choice
+        options:
+          - beyond0lte
+          - a52sxq
+          - a53x
+          - a73xq
+          - b0q
+          - g0q
+          - m52xq
+          - o1s
+          - p3s
+          - r0q
+          - r9s
+          - t2s
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -43,11 +58,10 @@ jobs:
       - name: Generate CI matrix
         id: generate-matrix
         run: |
-          matrix="$(find target -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-            | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          matrix=$(jq -cn --arg t "${{ github.event.inputs.target }}" '[$t]')
           echo "$matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-
+        
   build:
     name: Build
     needs: [shellcheck, generate-matrix]
@@ -104,6 +118,51 @@ jobs:
         run: |
           source ./buildenv.sh ${{ matrix.target }}
           {
+            echo "DEBUG=$DEBUG"
+            echo "SRC_DIR=$SRC_DIR"
+            echo "OUT_DIR=$OUT_DIR"
+            echo "ODIN_DIR=$ODIN_DIR"
+            echo "FW_DIR=$FW_DIR"
+            echo "TOOLS_DIR=$TOOLS_DIR"
+            echo "APKTOOL_DIR=$APKTOOL_DIR"
+            echo "WORK_DIR=$WORK_DIR"
+            echo "TMP_DIR=$TMP_DIR"
+          } >> "$GITHUB_ENV"
+          sed -e "/Automatically/d" -e "s/\"//g" "$OUT_DIR/config.sh" >> "$GITHUB_ENV"
+          echo "$TOOLS_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Build dependencies
+        run: ./scripts/build_dependencies.sh
+
+      - name: Download stock firmwares
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 60
+          max_attempts: 3
+          retry_on: error
+          command: ./scripts/download_fw.sh
+
+      - name: Extract stock firmwares
+        run: ./scripts/extract_fw.sh
+
+      - name: Build ROM
+        run: ./scripts/make_rom.sh
+        
+      - name: Install rclone
+        run: |
+          sudo apt update
+          sudo apt install -y rclone
+
+      - name: Restore rclone config
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf << 'EOF'
+          ${{ secrets.RCLONE_CONF }}
+          EOF
+          
+      - name: Upload ROM to Google Drive
+        run: |
+          rclone copy out mydrive:UN1CA --include "*.zip" --progress          {
             echo "DEBUG=$DEBUG"
             echo "SRC_DIR=$SRC_DIR"
             echo "OUT_DIR=$OUT_DIR"
