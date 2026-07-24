@@ -57,8 +57,12 @@ jobs:
       - name: Generate CI matrix
         id: generate-matrix
         run: |
-          matrix="$(find target -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-            | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          if [ -n "${{ github.event.inputs.target }}" ]; then
+            matrix=$(jq -n -c --arg t "${{ github.event.inputs.target }}" '[$t]')
+          else
+            matrix="$(find target -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+              | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          fi
           echo "$matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -160,4 +164,3 @@ jobs:
       - name: Upload ROM to Google Drive
         run: |
           rclone copy out mydrive:UN1CA --include "*.zip" --progress
-        
