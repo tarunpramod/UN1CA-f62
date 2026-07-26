@@ -3,9 +3,6 @@ name: Dump Firmware to Google Drive
 on:
   workflow_dispatch:
     inputs:
-      device:
-        description: "Device codename (only used to set up build paths via buildenv.sh)"
-        required: true
       model:
         description: "Model number, e.g. SM-S908E"
         required: true
@@ -63,7 +60,10 @@ jobs:
 
       - name: Generate build config
         run: |
-          source ./buildenv.sh ${{ github.event.inputs.device }}
+          # NOTE: a52sxq is only used here to source common paths
+          # (ODIN_DIR, FW_DIR, TOOLS_DIR, etc). It has no bearing
+          # on which firmware actually gets downloaded/extracted below.
+          source ./buildenv.sh a52sxq
           {
             echo "SRC_DIR=$SRC_DIR"
             echo "OUT_DIR=$OUT_DIR"
@@ -96,7 +96,6 @@ jobs:
           MODEL="${{ github.event.inputs.model }}"
           CSC="${{ github.event.inputs.csc }}"
           BUILD="$(cat "$FW_DIR/${MODEL}_${CSC}/.extracted")"
-          # Sanitize slashes in the build string (e.g. S908EXXU5D/S908EOXM5D/...)
           SAFE_BUILD="$(echo "$BUILD" | tr '/' '_')"
           echo "DUMP_NAME=${MODEL}_${CSC}_${SAFE_BUILD}" >> "$GITHUB_ENV"
           echo "FW_PATH=$FW_DIR/${MODEL}_${CSC}" >> "$GITHUB_ENV"
