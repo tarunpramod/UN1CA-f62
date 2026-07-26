@@ -1,0 +1,118 @@
+name: Dump Firmware to Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: "Device codename (only used to set up build paths via buildenv.sh)"
+        required: true
+      model:
+        description: "Model number, e.g. SM-S908E"
+        required: true
+      csc:
+        description: "CSC/region code, e.g. TUR"
+        required: true
+      imei:
+        description: "IMEI or serial used to query FUS (must pass Luhn check for the model's TAC)"
+        required: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dump:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+        with:
+          submodules: 'recursive'
+
+      - name: Free disk space (1/3)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo docker builder prune -a
+
+      - name: Free disk space (2/3)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+
+      - name: Free disk space (3/3)
+        uses: rokibhasansagar/slimhub_actions@main
+        with:
+          retain: 'compiler_cmake'
+
+      - name: Set up build environment
+        run: |
+          sudo apt update
+          DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
+            attr ccache clang ffmpeg libbrotli-dev libbz2-dev \
+            libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
+            libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp
+          sudo modprobe erofs f2fs
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Generate build config
+        run: |
+          source ./buildenv.sh ${{ github.event.inputs.device }}
+          {
+            echo "SRC_DIR=$SRC_DIR"
+            echo "OUT_DIR=$OUT_DIR"
+            echo "ODIN_DIR=$ODIN_DIR"
+            echo "FW_DIR=$FW_DIR"
+            echo "TOOLS_DIR=$TOOLS_DIR"
+            echo "WORK_DIR=$WORK_DIR"
+            echo "TMP_DIR=$TMP_DIR"
+          } >> "$GITHUB_ENV"
+          sed -e "/Automatically/d" -e "s/\"//g" "$OUT_DIR/config.sh" >> "$GITHUB_ENV"
+          echo "$TOOLS_DIR/bin" >> "$GITHUB_PATH"
+          echo "FW_STRING=${{ github.event.inputs.model }}/${{ github.event.inputs.csc }}/${{ github.event.inputs.imei }}" >> "$GITHUB_ENV"
+
+      - name: Build dependencies
+        run: ./scripts/build_dependencies.sh
+
+      - name: Download stock firmware
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 60
+          max_attempts: 3
+          retry_on: error
+          command: ./scripts/download_fw.sh --ignore-source --ignore-target --force "$FW_STRING"
+
+      - name: Extract stock firmware
+        run: ./scripts/extract_fw.sh --ignore-source --ignore-target --force "$FW_STRING"
+
+      - name: Resolve dump folder name
+        run: |
+          MODEL="${{ github.event.inputs.model }}"
+          CSC="${{ github.event.inputs.csc }}"
+          BUILD="$(cat "$FW_DIR/${MODEL}_${CSC}/.extracted")"
+          # Sanitize slashes in the build string (e.g. S908EXXU5D/S908EOXM5D/...)
+          SAFE_BUILD="$(echo "$BUILD" | tr '/' '_')"
+          echo "DUMP_NAME=${MODEL}_${CSC}_${SAFE_BUILD}" >> "$GITHUB_ENV"
+          echo "FW_PATH=$FW_DIR/${MODEL}_${CSC}" >> "$GITHUB_ENV"
+
+      - name: Install rclone and restore config
+        run: |
+          sudo apt update
+          sudo apt install -y rclone
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf << 'EOF'
+          ${{ secrets.RCLONE_CONF }}
+          EOF
+
+      - name: Upload extracted dump to Google Drive
+        run: |
+          rclone copy "$FW_PATH" "mydrive:UN1CA/dumps/${DUMP_NAME}" \
+            --progress \
+            --transfers 8 \
+            --checkers 8
