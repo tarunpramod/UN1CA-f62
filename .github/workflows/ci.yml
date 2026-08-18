@@ -79,11 +79,6 @@ jobs:
         with:
           tool-cache: true
 
-      - name: Free disk space (3/3)
-        uses: rokibhasansagar/slimhub_actions@main
-        with:
-          retain: 'compiler_cmake'
-
       - name: Set up build environment
         run: |
           sudo apt update
